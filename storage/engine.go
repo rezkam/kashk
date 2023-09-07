@@ -1,4 +1,4 @@
-// storage package for key-value storage engine
+// Package storage for key-value storage engine
 package storage
 
 import (
@@ -9,40 +9,82 @@ import (
 	"sync"
 )
 
-// Engine struct represents the storage engine
-type Engine struct {
-	file  *os.File         // The file used for storing key-value pairs
-	index map[string]int64 // Index to quickly locate the position of keys in the file
-	lock  sync.RWMutex     // Read-Write mutex for concurrent access
+const (
+	_  = iota // ignore first value by assigning to blank identifier
+	KB = 1 << (10 * iota)
+	MB
+	GB
+)
+
+// log represents the data and index for the storage engine
+type log struct {
+	file  *os.File
+	index map[string]int64
+	size  int64
 }
 
-// NewEngine initializes a new storage engine
-func NewEngine(filename string) (*Engine, error) {
-	// Open or create the file for writing, appending, and reading
+// Engine represents the storage engine for key-value storage
+// It's safe for concurrent use by multiple goroutines
+type Engine struct {
+	logs    []*log
+	lock    sync.RWMutex
+	maxSize int64
+}
+
+// NewEngine initializes a new storage engine and returns a pointer to it
+// creates the first log storage file with a given filename and size in bytes
+func NewEngine(filename string, maxSize int64) (*Engine, error) {
 	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return nil, err
 	}
-	// Initialize and return the Engine struct
+
 	return &Engine{
-		file:  file,
-		index: make(map[string]int64),
+		logs: []*log{
+			{
+				file:  file,
+				index: make(map[string]int64)},
+		},
+		maxSize: maxSize,
 	}, nil
 }
 
 // AppendKeyValue appends a key-value pair to the file
 func (e *Engine) AppendKeyValue(key, value string) error {
-	e.lock.Lock() // Lock for exclusive write access
+	e.lock.Lock()
 	defer e.lock.Unlock()
+
+	// Get the last log file
+	currentLog := e.logs[len(e.logs)-1]
+	if currentLog.size >= e.maxSize {
+		newFileName := fmt.Sprintf("%d.dat", len(e.logs))
+
+		newFile, err := os.OpenFile(newFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			return err
+		}
+
+		err = currentLog.file.Close()
+		if err != nil {
+			return err
+		}
+
+		currentLog = &log{file: newFile, index: make(map[string]int64)}
+		e.logs = append(e.logs, currentLog)
+	}
 
 	// Convert key to bytes and write it to the file
 	keyBytes := []byte(key)
-	if _, err := e.file.Write(keyBytes); err != nil {
+
+	written, err := currentLog.file.Write(keyBytes)
+	if err != nil {
 		return err
 	}
 
+	currentLog.size += int64(written)
+
 	// Find the current write position in the file
-	currentPos, err := e.file.Seek(0, io.SeekCurrent)
+	currentPos, err := currentLog.file.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return err
 	}
@@ -54,32 +96,54 @@ func (e *Engine) AppendKeyValue(key, value string) error {
 
 	// Write the size of the value to the file
 	binary.LittleEndian.PutUint32(sizeBuffer, valueSize)
-	if _, err := e.file.Write(sizeBuffer); err != nil {
-		return err
-	}
-	// Write the actual value to the file
-	if _, err := e.file.Write(valueBytes); err != nil {
+
+	written, err = currentLog.file.Write(sizeBuffer)
+	if err != nil {
 		return err
 	}
 
+	currentLog.size += int64(written)
+
+	// Write the actual value to the file
+	written, err = currentLog.file.Write(valueBytes)
+	if err != nil {
+		return err
+	}
+
+	currentLog.size += int64(written)
+
 	// Update the index with the current write position
-	e.index[key] = currentPos
+	currentLog.index[key] = currentPos
+
 	return nil
 }
 
-// GetValue retrieves the value of a given key from the file
+// GetValue returns the value for a given key searching from the latest log file
+// to the oldest log file available in the storage engine
 func (e *Engine) GetValue(key string) (string, error) {
-	e.lock.RLock() // Lock for read access
-	position, ok := e.index[key]
+	e.lock.RLock()
+	currentLog := e.logs[len(e.logs)-1]
+	position, ok := currentLog.index[key]
 	e.lock.RUnlock()
-
-	// Check if the key exists in the index
-	if !ok {
-		return "", fmt.Errorf("key %s not found", key)
+	if ok {
+		return e.readValueFromFile(position, currentLog)
 	}
 
-	// Open the file for reading
-	readFile, err := os.OpenFile(e.file.Name(), os.O_RDONLY, 0644)
+	for i := len(e.logs) - 2; i >= 0; i-- {
+		l := e.logs[i]
+
+		p, exists := l.index[key]
+		if exists {
+			return e.readValueFromFile(p, l)
+		}
+	}
+
+	return "", fmt.Errorf("key %s not found", key)
+}
+
+// readValueFromFile reads the value from the file at a given position by opening and seeking to the position
+func (e *Engine) readValueFromFile(position int64, l *log) (string, error) {
+	readFile, err := os.OpenFile(l.file.Name(), os.O_RDONLY, 0644)
 	if err != nil {
 		return "", err
 	}
@@ -90,7 +154,6 @@ func (e *Engine) GetValue(key string) (string, error) {
 		return "", err
 	}
 
-	// Read the size of the value
 	var sizeBuffer = make([]byte, 4)
 	if _, err := readFile.Read(sizeBuffer); err != nil {
 		return "", err
@@ -99,12 +162,10 @@ func (e *Engine) GetValue(key string) (string, error) {
 	// Convert the size from bytes to uint32
 	valueSize := binary.LittleEndian.Uint32(sizeBuffer)
 
-	// Read the actual value from the file
 	valueBuffer := make([]byte, valueSize)
 	if _, err := readFile.Read(valueBuffer); err != nil {
 		return "", err
 	}
 
-	// Convert the value to string and return
 	return string(valueBuffer), nil
 }
