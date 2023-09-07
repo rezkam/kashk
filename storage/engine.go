@@ -11,10 +11,9 @@ import (
 
 // Engine struct represents the storage engine
 type Engine struct {
-	file       *os.File         // The file used for storing key-value pairs
-	index      map[string]int64 // Index to quickly locate the position of keys in the file
-	lock       sync.RWMutex     // Read-Write mutex for concurrent access
-	currentPos int64            // Current write position in the file
+	file  *os.File         // The file used for storing key-value pairs
+	index map[string]int64 // Index to quickly locate the position of keys in the file
+	lock  sync.RWMutex     // Read-Write mutex for concurrent access
 }
 
 // NewEngine initializes a new storage engine
