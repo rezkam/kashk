@@ -16,7 +16,12 @@ const (
 	GB
 )
 
-const tombstone = "tombstone-jbc46-q42fd-pggmc-kp38y-6mqd8"
+const (
+	defaultTombstone = "tombstone-jbc46-q42fd-pggmc-kp38y-6mqd8"
+	DefaultLogSize   = 10 * MB
+	defaultKeySize   = 1 * KB
+	defaultDataFile  = "storage.dat"
+)
 
 // log represents the data and index for the storage engine
 type log struct {
@@ -27,34 +32,113 @@ type log struct {
 
 // Engine represents the storage engine for key-value storage
 // It's safe for concurrent use by multiple goroutines
+// TODO: Add garbage collector and compaction process
+// TODO: Use flock to lock the file for writing and make sure only one process can write to the file at a time
+// TODO: not multiple Engine instances
 type Engine struct {
-	logs    []*log
-	lock    sync.RWMutex
-	maxSize int64
+	// logs represents the list of log file and index for the storage engine
+	logs []*log
+	lock sync.RWMutex
+	// maxLogBytes represents the max size of the log file in bytes if the log file exceeds this size
+	// a new log file will be created and this file will be closed for writing.
+	// the smaller the size the more log files will be created and the more time it will take to read a key specially
+	// if the key is not found in the storage we have to recursively search all the log files to find the key from the
+	// latest to the oldest log file so inorder to reduce the number of log files we can increase the max log size
+	maxLogBytes int64
+	// maxKeyBytes represents the max size of the key in bytes if the key exceeds this size an error will be returned
+	// and the state of the storage engine will not be changed. Since all the keys are stored in the in-memory index
+	// it's better to keep the key size small to reduce the memory footprint of the storage engine and practically have
+	// more keys in the storage engine
+	maxKeyBytes int64
+	// represents the base data file name for the storage engine if the file does not exist it will be created
+	fileName string
+	// represents the tombstone value for the storage engine which a special value used to mark a key as deleted
+	// the key will still be part of the index and the value will be set to the tombstone value which later will be
+	// picked up by the garbage collector and removed from the index also the compaction process will remove the key
+	// from all the other log files
+	tombStone string
 }
 
-// NewEngine initializes a new storage engine and returns a pointer to it
-// creates the first log storage file with a given filename and size in bytes
-func NewEngine(filename string, maxSize int64) (*Engine, error) {
-	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+type OptionSetter func(*Engine) error
+
+// NewEngine creates a new Engine with default settings,
+// which can be overridden with optional settings
+func NewEngine(options ...OptionSetter) (*Engine, error) {
+	engine := &Engine{
+		maxLogBytes: DefaultLogSize,
+		maxKeyBytes: defaultKeySize,
+		fileName:    defaultDataFile,
+		tombStone:   defaultTombstone,
+	}
+
+	for _, option := range options {
+		if err := option(engine); err != nil {
+			return nil, err
+		}
+	}
+
+	file, err := os.OpenFile(engine.fileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Engine{
-		logs: []*log{
-			{
-				file:  file,
-				index: make(map[string]int64)},
-		},
-		maxSize: maxSize,
-	}, nil
+	engine.logs = []*log{{file: file, index: make(map[string]int64)}}
+
+	return engine, nil
+}
+
+// WithMaxLogSize sets the max size of the log file
+func WithMaxLogSize(size int64) OptionSetter {
+	return func(e *Engine) error {
+		if size <= 0 {
+			return fmt.Errorf("invalid max log size")
+		}
+		e.maxLogBytes = size
+
+		return nil
+	}
+}
+
+// WithMaxKeySize sets the max size of the key
+func WithMaxKeySize(size int64) OptionSetter {
+	return func(e *Engine) error {
+		if size <= 0 {
+			return fmt.Errorf("invalid max key size")
+		}
+		e.maxKeyBytes = size
+
+		return nil
+	}
+}
+
+// WithFileName sets the name of the data file
+func WithFileName(name string) OptionSetter {
+	return func(engine *Engine) error {
+		if name == "" {
+			return fmt.Errorf("invalid file name")
+		}
+		engine.fileName = name
+
+		return nil
+	}
+}
+
+// WithTombStone sets the tombstone value
+func WithTombStone(value string) OptionSetter {
+	return func(engine *Engine) error {
+		if value == "" {
+			return fmt.Errorf("invalid tombstone value")
+		}
+		engine.tombStone = value
+
+		return nil
+	}
 }
 
 // Put set a key-value pair in the storage engine
 // key and value are strings
 func (e *Engine) Put(key, value string) error {
-	return e.appendKeyValue(key, value)
+	return e.putKeyValue(key, value)
 }
 
 // Get returns the value for a given key from the storage engine
@@ -65,7 +149,26 @@ func (e *Engine) Get(key string) (string, error) {
 // Delete deletes a key-value pair from the storage engine
 // Internally it sets the value to a tombstone value and then garbage collector will remove it
 func (e *Engine) Delete(key string) error {
-	return e.appendKeyValue(key, tombstone)
+	return e.deleteKey(key)
+}
+
+// deleteKey validates the key and then appends the key-value pair to the storage engine
+func (e *Engine) deleteKey(key string) error {
+	if err := e.validateKey(key); err != nil {
+		return err
+	}
+	return e.appendKeyValue(key, e.tombStone)
+}
+
+// putKeyValue validates the key and value and then appends the key-value pair to the storage engine
+func (e *Engine) putKeyValue(key, value string) error {
+	if err := e.validateKey(key); err != nil {
+		return err
+	}
+	if err := e.validateValue(value); err != nil {
+		return err
+	}
+	return e.appendKeyValue(key, value)
 }
 
 // appendKeyValue appends a key-value pair to the file
@@ -75,7 +178,7 @@ func (e *Engine) appendKeyValue(key, value string) error {
 
 	// Get the last log file
 	currentLog := e.logs[len(e.logs)-1]
-	if currentLog.size >= e.maxSize {
+	if currentLog.size >= e.maxLogBytes {
 		newFileName := fmt.Sprintf("%d.dat", len(e.logs))
 
 		newFile, err := os.OpenFile(newFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
@@ -140,6 +243,9 @@ func (e *Engine) appendKeyValue(key, value string) error {
 // getValue returns the value for a given key searching from the latest log file
 // to the oldest log file available in the storage engine
 func (e *Engine) getValue(key string) (string, error) {
+	if err := e.validateKey(key); err != nil {
+		return "", err
+	}
 	e.lock.RLock()
 	currentLog := e.logs[len(e.logs)-1]
 	position, ok := currentLog.index[key]
@@ -166,7 +272,9 @@ func (e *Engine) readValueFromFile(position int64, l *log) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer readFile.Close()
+	defer func(readFile *os.File) {
+		_ = readFile.Close()
+	}(readFile)
 
 	// Seek to the position of the key in the file
 	if _, err := readFile.Seek(position, io.SeekStart); err != nil {
@@ -185,8 +293,29 @@ func (e *Engine) readValueFromFile(position int64, l *log) (string, error) {
 	if _, err := readFile.Read(valueBuffer); err != nil {
 		return "", err
 	}
-	if string(valueBuffer) == tombstone {
+	if string(valueBuffer) == e.tombStone {
 		return "", fmt.Errorf("key not found")
 	}
 	return string(valueBuffer), nil
+}
+
+func (e *Engine) validateKey(key string) error {
+	if key == "" {
+		return fmt.Errorf("key cannot be empty")
+	}
+	if int64(len([]byte(key))) > e.maxKeyBytes {
+		return fmt.Errorf("key cannot be longer than %d bytes", e.maxKeyBytes)
+	}
+	return nil
+}
+
+func (e *Engine) validateValue(value string) error {
+	if value == e.tombStone {
+		return fmt.Errorf("value cannot be tombstone")
+	}
+	// value size should be less than the max size of the log file
+	if int64(len([]byte(value))) > e.maxLogBytes {
+		return fmt.Errorf("value cannot be longer than %d bytes", e.maxLogBytes)
+	}
+	return nil
 }
