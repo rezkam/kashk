@@ -49,8 +49,19 @@ func NewEngine(filename string, maxSize int64) (*Engine, error) {
 	}, nil
 }
 
-// AppendKeyValue appends a key-value pair to the file
-func (e *Engine) AppendKeyValue(key, value string) error {
+// Put set a key-value pair in the storage engine
+// key and value are strings
+func (e *Engine) Put(key, value string) error {
+	return e.appendKeyValue(key, value)
+}
+
+// Get returns the value for a given key from the storage engine
+func (e *Engine) Get(key string) (string, error) {
+	return e.getValue(key)
+}
+
+// appendKeyValue appends a key-value pair to the file
+func (e *Engine) appendKeyValue(key, value string) error {
 	e.lock.Lock()
 	defer e.lock.Unlock()
 
@@ -118,9 +129,9 @@ func (e *Engine) AppendKeyValue(key, value string) error {
 	return nil
 }
 
-// GetValue returns the value for a given key searching from the latest log file
+// getValue returns the value for a given key searching from the latest log file
 // to the oldest log file available in the storage engine
-func (e *Engine) GetValue(key string) (string, error) {
+func (e *Engine) getValue(key string) (string, error) {
 	e.lock.RLock()
 	currentLog := e.logs[len(e.logs)-1]
 	position, ok := currentLog.index[key]

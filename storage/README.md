@@ -30,14 +30,14 @@ if err != nil {
 	log.Fatal("Failed to initialize engine:", err)
 }
 
-// Append a key-value pair
-err = engine.AppendKeyValue("name", "John Doe")
+// Put a key-value pair
+err = engine.Put("name", "John Doe")
 if err != nil {
 	log.Fatal("Failed to append key-value pair:", err)
 }
 
 // Read a value back
-value, err := engine.GetValue("name")
+value, err := engine.Get("name")
 if err != nil {
 	log.Fatal("Failed to get value:", err)
 }

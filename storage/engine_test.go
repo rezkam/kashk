@@ -20,11 +20,11 @@ func TestBasicFunctionality(t *testing.T) {
 
 	// Test appending a key-value pair and reading it back
 	key, value := "name", "gopher"
-	if err := engine.AppendKeyValue(key, value); err != nil {
+	if err := engine.Put(key, value); err != nil {
 		t.Fatal("Failed to append key-value:", err)
 	}
 
-	readValue, err := engine.GetValue(key)
+	readValue, err := engine.Get(key)
 	if err != nil {
 		t.Fatal("Failed to get value:", err)
 	}
@@ -49,16 +49,16 @@ func TestKeyCollision(t *testing.T) {
 	}
 
 	key, value1, value2 := "name", "gopher", "badger"
-	if err := engine.AppendKeyValue(key, value1); err != nil {
+	if err := engine.Put(key, value1); err != nil {
 		t.Fatal("Failed to append first key-value:", err)
 	}
 
 	// Overwrite the value for the same key
-	if err := engine.AppendKeyValue(key, value2); err != nil {
+	if err := engine.Put(key, value2); err != nil {
 		t.Fatal("Failed to append second key-value:", err)
 	}
 
-	readValue, err := engine.GetValue(key)
+	readValue, err := engine.Get(key)
 	if err != nil {
 		t.Fatal("Failed to get value:", err)
 	}
@@ -80,16 +80,16 @@ func TestGetValueFromSecondLog(t *testing.T) {
 		t.Fatal("Failed to create engine:", err)
 	}
 
-	if err := engine.AppendKeyValue("key1", "value1"); err != nil {
+	if err := engine.Put("key1", "value1"); err != nil {
 		t.Fatalf("Failed to append key-value: %v", err)
 	}
 
-	if err := engine.AppendKeyValue("key2", "value2"); err != nil {
+	if err := engine.Put("key2", "value2"); err != nil {
 		t.Fatalf("Failed to append key-value: %v", err)
 	}
 
 	// try to get value from the first log file
-	value, err := engine.GetValue("key1")
+	value, err := engine.Get("key1")
 	if err != nil {
 		t.Fatalf("Failed to get value: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestGetValueFromSecondLog(t *testing.T) {
 	}
 
 	// try to get value from the second log file
-	value, err = engine.GetValue("key2")
+	value, err = engine.Get("key2")
 	if err != nil {
 		t.Fatalf("Failed to get value: %v", err)
 	}
