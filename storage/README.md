@@ -1,12 +1,12 @@
-# Key-Value Storage Engine in Go
+# Kashk Storage
 
 ## Overview
 
-Kashk Storage package contains a versatile and configurable key-value storage engine written in Go. The engine offers efficient key-value storage, retrieval, and deletion operations, optimized for concurrency and featuring automatic size based data file rotation.
+Kashk Storage contains a versatile and configurable key-value storage engine written in Go. The engine offers efficient key-value storage, retrieval, and deletion operations, optimized for concurrency and featuring automatic size-based data file rotation.
 
 ## Features
 
-- **Put Key-Value Pairs**: Efficiently put key-value pairs into to the storage file almost similar to performance of writing to a file.
+- **Put Key-Value Pairs**: Efficiently put key-value pairs into the storage file, almost similar to the performance of writing to a file.
 - **In-Memory Indexing**: Utilizes an in-memory index for quick data retrieval.
 - **Thread-Safe**: It provides safe concurrent read and write access via a read-write mutex.
 - **Read Values by Key**: Retrieve values quickly using an in-memory index.
@@ -14,7 +14,7 @@ Kashk Storage package contains a versatile and configurable key-value storage en
 - **Customizable File Size**: Set the maximum size for each log file. A new file will be used when the current one exceeds this limit.
 - **Customizable Key Size**: Control the maximum allowed size for keys.
 - **Customizable File Names**: You can set the name for the data file.
-- **Customizable Tombstone Value**: You can define the tombstone value used for marking deleted entries.
+- **Customizable Tombstone Value**: You can define the tombstone value for marking deleted entries.
 
 
 ## Getting Started
