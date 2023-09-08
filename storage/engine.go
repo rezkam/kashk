@@ -16,6 +16,8 @@ const (
 	GB
 )
 
+const tombstone = "tombstone-jbc46-q42fd-pggmc-kp38y-6mqd8"
+
 // log represents the data and index for the storage engine
 type log struct {
 	file  *os.File
@@ -58,6 +60,12 @@ func (e *Engine) Put(key, value string) error {
 // Get returns the value for a given key from the storage engine
 func (e *Engine) Get(key string) (string, error) {
 	return e.getValue(key)
+}
+
+// Delete deletes a key-value pair from the storage engine
+// Internally it sets the value to a tombstone value and then garbage collector will remove it
+func (e *Engine) Delete(key string) error {
+	return e.appendKeyValue(key, tombstone)
 }
 
 // appendKeyValue appends a key-value pair to the file
@@ -177,6 +185,8 @@ func (e *Engine) readValueFromFile(position int64, l *log) (string, error) {
 	if _, err := readFile.Read(valueBuffer); err != nil {
 		return "", err
 	}
-
+	if string(valueBuffer) == tombstone {
+		return "", fmt.Errorf("key not found")
+	}
 	return string(valueBuffer), nil
 }

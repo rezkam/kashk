@@ -35,7 +35,6 @@ func TestBasicFunctionality(t *testing.T) {
 }
 
 // Test for key collisions and overwrite behavior
-
 func TestKeyCollision(t *testing.T) {
 	fileName := "test_key_collision.dat"
 	// Remove the test file if it exists
@@ -106,6 +105,44 @@ func TestGetValueFromSecondLog(t *testing.T) {
 
 	if value != "value2" {
 		t.Fatalf("Expected value 'value2', got '%s'", value)
+	}
+}
+
+// Test for deleting a key-value pair using tombstone value
+func TestDelete(t *testing.T) {
+	fileName := "test_delete.dat"
+	// Remove the test file if it exists
+	if err := removeFile(fileName); err != nil {
+		t.Fatal("Failed to remove test file:", err)
+	}
+
+	engine, err := NewEngine(fileName, 1*KB)
+	if err != nil {
+		t.Fatal("Failed to create engine:", err)
+	}
+
+	// Test appending a key-value pair and reading it back
+	key, value := "name", "gopher"
+	if err := engine.Put(key, value); err != nil {
+		t.Fatal("Failed to append key-value:", err)
+	}
+
+	readValue, err := engine.Get(key)
+	if err != nil {
+		t.Fatal("Failed to get value:", err)
+	}
+
+	if readValue != value {
+		t.Fatalf("Expected value '%s', got '%s'", value, readValue)
+	}
+
+	// Delete the key-value pair
+	if err := engine.Delete(key); err != nil {
+		t.Fatal("Failed to delete key-value:", err)
+	}
+
+	if _, err := engine.Get(key); err == nil {
+		t.Fatal("Expected key to be deleted")
 	}
 }
 

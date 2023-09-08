@@ -2,15 +2,16 @@
 
 ## Overview
 
-This repository contains a basic key-value storage engine written in Go. The engine allows you to append key-value pairs to a file and read them back efficiently using an in-memory index.
+This repository contains a basic key-value persistent storage engine written in Go. The engine allows you to append key-value pairs to storage, delete them, and read them back efficiently using an in-memory index.
 
 ## Features
 
 - **Append Key-Value Pairs**: Efficiently appends key-value pairs to a storage file.
 - **Read Values by Key**: Quickly reads values from the storage file using a key.
-- **Thread Safety**: Uses Go's `sync.RWMutex` for safe concurrent read and write access.
+- **Delete Key-Value Pairs**: Efficiently deletes key-value pairs by marking them as tombstones in the storage file.
+- **Thread Safety**: Safe concurrent read and write access.
 - **Size-Rotated Data Files**: Automatically switches to a new data file when the current file exceeds a specified size limit.
-- **In-memory Indexing**: Utilizes an in-memory index to speed up data retrieval.
+- **In-memory Indexing**: Utilizes an in-memory index to speed up data retrieval and deletions.
 
 ## Getting Started
 
@@ -21,7 +22,7 @@ This repository contains a basic key-value storage engine written in Go. The eng
 
 ### Usage
 
-Here's how to create a new storage engine, append a key-value pair, and read a value back:
+Here's how to create a new storage engine, append a key-value pair, read a value back, and delete a key-value pair:
 
 ```go
 // Initialize new storage engine with a filename and maximum file size in bytes.
@@ -40,4 +41,10 @@ if err != nil {
 value, err := engine.Get("name")
 if err != nil {
 	log.Fatal("Failed to get value:", err)
+}
+
+// Delete a key-value pair
+err = engine.Delete("name")
+if err != nil {
+	log.Fatal("Failed to delete key-value pair:", err)
 }
