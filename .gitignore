@@ -18,8 +18,5 @@
 # vendor/
 
 # Go workspace file
-go.work
 *.db
 *.dat
-go.sum
-go.work.sum
