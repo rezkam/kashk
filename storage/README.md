@@ -22,7 +22,7 @@ Kashk Storage contains a versatile and configurable key-value storage engine wri
 ### Installation
 
 1. Clone this repository or download the source code.
-2. Navigate to the directory containing the `storage.go` file.
+2. Create a data and give the user permission to read and write to it.
 
 ### Usage
 
@@ -32,16 +32,15 @@ Here's how to create a new storage engine and use its features:
 import "path-to-storage-package/storage"
 
 // Initialize a new storage engine with default settings
-engine, err := storage.NewEngine()
+engine, err := storage.NewEngine("./data-path/")
 if err != nil {
     log.Fatal("Failed to initialize engine:", err)
 }
 
 // Initialize with options
-engine, err := storage.NewEngine(
+engine, err := storage.NewEngine("./data-path/",
     storage.WithMaxLogSize(10 * storage.MB),
     storage.WithMaxKeySize(1 * storage.KB),
-    storage.WithFileName("custom_data.dat"),
     storage.WithTombStone("custom_tombstone")
 )
 if err != nil {

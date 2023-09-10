@@ -10,10 +10,10 @@ import (
 
 // Test for basic AppendKeyValue and GetValue functionality
 func TestBasicFunctionality(t *testing.T) {
-	fileName := "test_basic.dat"
-	require.NoError(t, removeFile(fileName))
+	dataPath := "test_basic/"
+	require.NoError(t, removeDir(dataPath))
 
-	engine, err := NewEngine(WithFileName(fileName))
+	engine, err := NewEngine(dataPath)
 	require.NoError(t, err)
 
 	key, value := "name", "gopher"
@@ -28,10 +28,10 @@ func TestBasicFunctionality(t *testing.T) {
 
 // Test for key collisions and overwrite behavior
 func TestKeyCollision(t *testing.T) {
-	fileName := "test_key_collision.dat"
-	require.NoError(t, removeFile(fileName))
+	dataPath := "test_key_collision/"
+	require.NoError(t, removeDir(dataPath))
 
-	engine, err := NewEngine(WithFileName(fileName))
+	engine, err := NewEngine(dataPath)
 	require.NoError(t, err)
 
 	key, value1, value2 := "name", "gopher", "badger"
@@ -46,10 +46,10 @@ func TestKeyCollision(t *testing.T) {
 }
 
 func TestGetValueFromSecondLog(t *testing.T) {
-	fileName := "test_get_value_from_second_log.dat"
-	require.NoError(t, removeFile(fileName))
+	dataPath := "test_get_value_from_second_log/"
+	require.NoError(t, removeDir(dataPath))
 
-	engine, err := NewEngine(WithFileName(fileName), WithMaxLogSize(1)) // size = 1 byte
+	engine, err := NewEngine(dataPath, WithMaxLogSize(1)) // size = 1 byte
 	require.NoError(t, err)
 
 	require.NoError(t, engine.Put("key1", "1"))
@@ -68,10 +68,10 @@ func TestGetValueFromSecondLog(t *testing.T) {
 
 // Test for deleting a key-value pair using tombstone value
 func TestDelete(t *testing.T) {
-	fileName := "test_delete.dat"
-	require.NoError(t, removeFile(fileName))
+	dataPath := "test_delete/"
+	require.NoError(t, removeDir(dataPath))
 
-	engine, err := NewEngine(WithFileName(fileName))
+	engine, err := NewEngine(dataPath)
 	require.NoError(t, err)
 
 	key, value := "name", "gopher"
@@ -89,10 +89,10 @@ func TestDelete(t *testing.T) {
 
 // Test for empty key
 func TestEmptyKey(t *testing.T) {
-	fileName := "test_empty_key.dat"
-	require.NoError(t, removeFile(fileName))
+	dataPath := "test_empty_key/"
+	require.NoError(t, removeDir(dataPath))
 
-	engine, err := NewEngine(WithFileName(fileName))
+	engine, err := NewEngine(dataPath)
 	require.NoError(t, err)
 
 	require.Error(t, engine.Put("", "value"))
@@ -100,10 +100,10 @@ func TestEmptyKey(t *testing.T) {
 
 // Test for empty value
 func TestEmptyValue(t *testing.T) {
-	fileName := "test_empty_value.dat"
-	require.NoError(t, removeFile(fileName))
+	dataPath := "test_empty_value/"
+	require.NoError(t, removeDir(dataPath))
 
-	engine, err := NewEngine(WithFileName(fileName))
+	engine, err := NewEngine(dataPath)
 	require.NoError(t, err)
 
 	require.NoError(t, engine.Put("key", ""))
@@ -115,10 +115,10 @@ func TestEmptyValue(t *testing.T) {
 
 // Test for large key and value
 func TestLargeKeyValue(t *testing.T) {
-	fileName := "test_large_key_value.dat"
-	require.NoError(t, removeFile(fileName))
+	dataPath := "test_large_key_value/"
+	require.NoError(t, removeDir(dataPath))
 
-	engine, err := NewEngine(WithFileName(fileName), WithMaxKeySize(1*KB), WithMaxLogSize(10*KB))
+	engine, err := NewEngine(dataPath, WithMaxKeySize(1*KB), WithMaxLogSize(10*KB))
 	require.NoError(t, err)
 
 	largeKey := string(make([]byte, 2*KB))
@@ -130,10 +130,10 @@ func TestLargeKeyValue(t *testing.T) {
 
 // Test for deleting a non-existent key
 func TestDeleteNonExistentKey(t *testing.T) {
-	fileName := "test_delete_non_existent_key.dat"
-	require.NoError(t, removeFile(fileName))
+	dataPath := "test_delete_non_existent_key/"
+	require.NoError(t, removeDir(dataPath))
 
-	engine, err := NewEngine(WithFileName(fileName))
+	engine, err := NewEngine(dataPath)
 	require.NoError(t, err)
 
 	require.NoError(t, engine.Delete("non_existent_key"))
@@ -142,18 +142,18 @@ func TestDeleteNonExistentKey(t *testing.T) {
 
 // Test for key size and value size validation
 func TestKeyAndValueSizeValidation(t *testing.T) {
-	fileName := "test_key_value_size_validation.dat"
-	require.NoError(t, removeFile(fileName))
+	dataPath := "test_key_value_size_validation/"
+	require.NoError(t, removeDir(dataPath))
 
-	engine, err := NewEngine(WithFileName(fileName), WithMaxKeySize(10), WithMaxLogSize(10))
+	engine, err := NewEngine(dataPath, WithMaxKeySize(10), WithMaxLogSize(10))
 	require.NoError(t, err)
 
 	require.Error(t, engine.Put("veryLongKeyForThis", "value"))
 	require.Error(t, engine.Put("key", "veryLongValueForThis"))
 }
 
-func removeFile(filename string) error {
-	if err := os.Remove(filename); err != nil && !os.IsNotExist(err) {
+func removeDir(dirname string) error {
+	if err := os.RemoveAll(dirname); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 

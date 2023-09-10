@@ -20,7 +20,7 @@ const (
 	defaultTombstone = "tombstone-jbc46-q42fd-pggmc-kp38y-6mqd8"
 	DefaultLogSize   = 10 * MB
 	defaultKeySize   = 1 * KB
-	defaultDataFile  = "storage.dat"
+	firstLogFileName = "1.dat"
 )
 
 // log represents the data and index for the storage engine
@@ -50,25 +50,49 @@ type Engine struct {
 	// it's better to keep the key size small to reduce the memory footprint of the storage engine and practically have
 	// more keys in the storage engine
 	maxKeyBytes int64
-	// represents the base data file name for the storage engine if the file does not exist it will be created
-	fileName string
 	// represents the tombstone value for the storage engine which a special value used to mark a key as deleted
 	// the key will still be part of the index and the value will be set to the tombstone value which later will be
 	// picked up by the garbage collector and removed from the index also the compaction process will remove the key
 	// from all the other log files
 	tombStone string
+	// represents the path where the data files will be stored if the path doesn't exist it will be created
+	dataPath string
 }
 
 type OptionSetter func(*Engine) error
 
-// NewEngine creates a new Engine with default settings,
+// NewEngine creates a new Engine instance with default settings
 // which can be overridden with optional settings
-func NewEngine(options ...OptionSetter) (*Engine, error) {
+// path is where the data files will be stored if the path doesn't exist it will be created
+// the user should have write access to the path otherwise an error will be returned
+func NewEngine(path string, options ...OptionSetter) (*Engine, error) {
+
+	// create the data file directory if it doesn't exist
+	if err := os.MkdirAll(path, 0755); err != nil {
+		return nil, err
+	}
+
+	// check user access to the data path
+	tempFile, err := os.CreateTemp(path, "test-access-temp-file")
+	if err != nil {
+		return nil, err
+	}
+
+	if err := os.Remove(tempFile.Name()); err != nil {
+		return nil, err
+	}
+
+	file, err := os.OpenFile(path+firstLogFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return nil, err
+	}
+
 	engine := &Engine{
 		maxLogBytes: DefaultLogSize,
 		maxKeyBytes: defaultKeySize,
-		fileName:    defaultDataFile,
 		tombStone:   defaultTombstone,
+		dataPath:    path,
+		logs:        []*log{{file: file, index: make(map[string]int64)}},
 	}
 
 	for _, option := range options {
@@ -76,13 +100,6 @@ func NewEngine(options ...OptionSetter) (*Engine, error) {
 			return nil, err
 		}
 	}
-
-	file, err := os.OpenFile(engine.fileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return nil, err
-	}
-
-	engine.logs = []*log{{file: file, index: make(map[string]int64)}}
 
 	return engine, nil
 }
@@ -106,18 +123,6 @@ func WithMaxKeySize(size int64) OptionSetter {
 			return fmt.Errorf("invalid max key size")
 		}
 		e.maxKeyBytes = size
-
-		return nil
-	}
-}
-
-// WithFileName sets the name of the data file
-func WithFileName(name string) OptionSetter {
-	return func(engine *Engine) error {
-		if name == "" {
-			return fmt.Errorf("invalid file name")
-		}
-		engine.fileName = name
 
 		return nil
 	}
@@ -179,9 +184,9 @@ func (e *Engine) appendKeyValue(key, value string) error {
 	// Get the last log file
 	currentLog := e.logs[len(e.logs)-1]
 	if currentLog.size >= e.maxLogBytes {
-		newFileName := fmt.Sprintf("%d.dat", len(e.logs))
+		newFileName := fmt.Sprintf("%d.dat", len(e.logs)+1)
 
-		newFile, err := os.OpenFile(newFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		newFile, err := os.OpenFile(e.dataPath+newFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
 			return err
 		}
