@@ -20,5 +20,5 @@ jobs:
         go-version: '1.21.1'
 
     - name: Test Storage
-      run: go test -v ./storage
+      run: go test -v .
 

@@ -24,6 +24,8 @@ func TestBasicFunctionality(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, value, readValue)
+
+	require.NoError(t, engine.Close())
 }
 
 // Test for key collisions and overwrite behavior
@@ -43,6 +45,8 @@ func TestKeyCollision(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, value2, readValue)
+
+	require.NoError(t, engine.Close())
 }
 
 func TestGetValueFromSecondLog(t *testing.T) {
@@ -64,6 +68,8 @@ func TestGetValueFromSecondLog(t *testing.T) {
 	value, err = engine.Get("key2")
 	require.NoError(t, err)
 	assert.Equal(t, "2", value)
+
+	require.NoError(t, engine.Close())
 }
 
 // Test for deleting a key-value pair using tombstone value
@@ -85,6 +91,8 @@ func TestDelete(t *testing.T) {
 
 	_, err = engine.Get(key)
 	require.Error(t, err)
+
+	require.NoError(t, engine.Close())
 }
 
 // Test for empty key
@@ -96,6 +104,8 @@ func TestEmptyKey(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Error(t, engine.Put("", "value"))
+
+	require.NoError(t, engine.Close())
 }
 
 // Test for empty value
@@ -111,6 +121,8 @@ func TestEmptyValue(t *testing.T) {
 	readValue, err := engine.Get("key")
 	require.NoError(t, err)
 	assert.Equal(t, "", readValue)
+
+	require.NoError(t, engine.Close())
 }
 
 // Test for large key and value
@@ -126,6 +138,8 @@ func TestLargeKeyValue(t *testing.T) {
 
 	largeValue := string(make([]byte, 20*KB))
 	require.Error(t, engine.Put("key", largeValue))
+
+	require.NoError(t, engine.Close())
 }
 
 // Test for deleting a non-existent key
@@ -138,6 +152,7 @@ func TestDeleteNonExistentKey(t *testing.T) {
 
 	require.NoError(t, engine.Delete("non_existent_key"))
 
+	require.NoError(t, engine.Close())
 }
 
 // Test for key size and value size validation
@@ -150,6 +165,8 @@ func TestKeyAndValueSizeValidation(t *testing.T) {
 
 	require.Error(t, engine.Put("veryLongKeyForThis", "value"))
 	require.Error(t, engine.Put("key", "veryLongValueForThis"))
+
+	require.NoError(t, engine.Close())
 }
 
 func removeDir(dirname string) error {

@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"sync"
+
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -31,10 +33,7 @@ type log struct {
 }
 
 // Engine represents the storage engine for key-value storage
-// It's safe for concurrent use by multiple goroutines
 // TODO: Add garbage collector and compaction process
-// TODO: Use flock to lock the file for writing and make sure only one process can write to the file at a time
-// TODO: not multiple Engine instances
 type Engine struct {
 	// logs represents the list of log file and index for the storage engine
 	logs []*log
@@ -57,6 +56,9 @@ type Engine struct {
 	tombStone string
 	// represents the path where the data files will be stored if the path doesn't exist it will be created
 	dataPath string
+	// represents the file used to lock the storage engine for writing
+	// this lock makes sure only one process can write to the storage engine at a time
+	lockFile *os.File
 }
 
 type OptionSetter func(*Engine) error
@@ -72,17 +74,17 @@ func NewEngine(path string, options ...OptionSetter) (*Engine, error) {
 		return nil, err
 	}
 
-	// check user access to the data path
-	tempFile, err := os.CreateTemp(path, "test-access-temp-file")
+	err := validateDataDirAccess(path)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := os.Remove(tempFile.Name()); err != nil {
+	lockFile, err := createFlock(path)
+	if err != nil {
 		return nil, err
 	}
 
-	file, err := os.OpenFile(path+firstLogFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	file, err := os.OpenFile(path+firstLogFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, err
 	}
@@ -92,6 +94,7 @@ func NewEngine(path string, options ...OptionSetter) (*Engine, error) {
 		maxKeyBytes: defaultKeySize,
 		tombStone:   defaultTombstone,
 		dataPath:    path,
+		lockFile:    lockFile,
 		logs:        []*log{{file: file, index: make(map[string]int64)}},
 	}
 
@@ -102,6 +105,23 @@ func NewEngine(path string, options ...OptionSetter) (*Engine, error) {
 	}
 
 	return engine, nil
+}
+
+func (e *Engine) Close() error {
+	currentLog := e.logs[len(e.logs)-1]
+
+	if err := currentLog.file.Sync(); err != nil {
+		return err
+	}
+	if err := currentLog.file.Close(); err != nil {
+		return err
+	}
+
+	if err := unix.Flock(int(e.lockFile.Fd()), unix.LOCK_UN); err != nil {
+		return nil
+	}
+
+	return nil
 }
 
 // WithMaxLogSize sets the max size of the log file
