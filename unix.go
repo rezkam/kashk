@@ -6,8 +6,7 @@ import (
 )
 
 const (
-	lockFileName       = ".lock"
-	testAccessFileName = "test-access-file"
+	lockFileName = ".lock"
 )
 
 func createFlock(path string) (*os.File, error) {
@@ -22,20 +21,4 @@ func createFlock(path string) (*os.File, error) {
 	}
 
 	return lockFile, nil
-}
-
-func validateDataDirAccess(path string) error {
-	testFile, err := os.OpenFile(path+testAccessFileName, os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	err = testFile.Close()
-	if err != nil {
-		return err
-	}
-	err = os.Remove(path + testAccessFileName)
-	if err != nil {
-		return err
-	}
-	return nil
 }

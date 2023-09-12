@@ -68,15 +68,13 @@ type OptionSetter func(*Engine) error
 // path is where the data files will be stored if the path doesn't exist it will be created
 // the user should have write access to the path otherwise an error will be returned
 func NewEngine(path string, options ...OptionSetter) (*Engine, error) {
-
-	// create the data file directory if it doesn't exist
-	if err := os.MkdirAll(path, 0755); err != nil {
+	if err := validateDataPath(path); err != nil {
 		return nil, err
 	}
-
-	err := validateDataDirAccess(path)
-	if err != nil {
+	if exists, err := dataFileExists(path); err != nil {
 		return nil, err
+	} else if exists {
+		return nil, fmt.Errorf("data file exists we have to index it")
 	}
 
 	lockFile, err := createFlock(path)
