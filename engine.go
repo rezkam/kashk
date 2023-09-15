@@ -218,10 +218,19 @@ func (e *Engine) appendKeyValue(key, value string) error {
 		e.logs = append(e.logs, currentLog)
 	}
 
-	// Convert key to bytes and write it to the file
 	keyBytes := []byte(key)
+	keySize := uint32(len(keyBytes))
+	sizeBuffer := make([]byte, 4)
+	binary.LittleEndian.PutUint32(sizeBuffer, keySize)
 
-	written, err := currentLog.file.Write(keyBytes)
+	written, err := currentLog.file.Write(sizeBuffer)
+	if err != nil {
+		return err
+	}
+
+	currentLog.size += int64(written)
+
+	written, err = currentLog.file.Write(keyBytes)
 	if err != nil {
 		return err
 	}
@@ -229,19 +238,16 @@ func (e *Engine) appendKeyValue(key, value string) error {
 	currentLog.size += int64(written)
 
 	// Find the current write position in the file
+	// Current position is the position that we write the value size
 	currentPos, err := currentLog.file.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return err
 	}
 
-	// Convert value to bytes
 	valueBytes := []byte(value)
 	valueSize := uint32(len(valueBytes))
-	sizeBuffer := make([]byte, 4)
-
-	// Write the size of the value to the file
+	sizeBuffer = make([]byte, 4)
 	binary.LittleEndian.PutUint32(sizeBuffer, valueSize)
-
 	written, err = currentLog.file.Write(sizeBuffer)
 	if err != nil {
 		return err
@@ -249,7 +255,6 @@ func (e *Engine) appendKeyValue(key, value string) error {
 
 	currentLog.size += int64(written)
 
-	// Write the actual value to the file
 	written, err = currentLog.file.Write(valueBytes)
 	if err != nil {
 		return err
