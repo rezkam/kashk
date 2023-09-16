@@ -63,7 +63,8 @@ func TestDataFileExists(t *testing.T) {
 	_, err = dataFile.Write([]byte("test"))
 	require.NoError(t, err, "Failed to write to test .dat file: %v", err)
 
-	exists, err := dataFileExists(tempDir)
+	files, err := extractDatafiles(tempDir)
+	exists := len(files) > 0
 	require.NoError(t, err, "Failed to check if data file exists: %v", err)
 	assert.True(t, exists, "Expected data file to exist")
 }
@@ -77,7 +78,8 @@ func TestDataFileNotExists(t *testing.T) {
 	_, err = os.Create(dataFilePath)
 	require.NoError(t, err, "Failed to create test .dat file: %v", err)
 
-	exists, err := dataFileExists(tempDir)
+	files, err := extractDatafiles(tempDir)
+	exists := len(files) > 0
 	require.NoError(t, err, "Failed to check if data file exists: %v", err)
 	assert.False(t, exists, "Expected data file to exist")
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"golang.org/x/sys/unix"
@@ -36,6 +37,7 @@ type log struct {
 // TODO: Add garbage collector and compaction process
 type Engine struct {
 	// logs represents the list of log file and index for the storage engine
+	// TODO: let's see if we can change this to a []log and what's the benefit of using a slice of pointers
 	logs []*log
 	lock sync.RWMutex
 	// maxLogBytes represents the max size of the log file in bytes if the log file exceeds this size
@@ -71,21 +73,30 @@ func NewEngine(path string, options ...OptionSetter) (*Engine, error) {
 	if err := validateDataPath(path); err != nil {
 		return nil, err
 	}
-	if exists, err := dataFileExists(path); err != nil {
-		return nil, err
-	} else if exists {
-		return nil, fmt.Errorf("data file exists we have to index it")
-	}
 
 	lockFile, err := createFlock(path)
 	if err != nil {
 		return nil, err
 	}
 
-	file, err := os.OpenFile(path+firstLogFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	dataFiles, err := extractDatafiles(path)
 	if err != nil {
 		return nil, err
 	}
+
+	logs, err := loadLogsFromDataFiles(dataFiles)
+	if err != nil {
+		return nil, err
+	}
+
+	fileName := fmt.Sprintf("%d%s", len(logs)+1, dataFileFormatSuffix)
+	dataFilePath := filepath.Join(path, fileName)
+	file, err := os.OpenFile(dataFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return nil, err
+	}
+
+	logs = append(logs, &log{file: file, index: make(map[string]int64)})
 
 	engine := &Engine{
 		maxLogBytes: DefaultLogSize,
@@ -93,7 +104,7 @@ func NewEngine(path string, options ...OptionSetter) (*Engine, error) {
 		tombStone:   defaultTombstone,
 		dataPath:    path,
 		lockFile:    lockFile,
-		logs:        []*log{{file: file, index: make(map[string]int64)}},
+		logs:        logs,
 	}
 
 	for _, option := range options {
