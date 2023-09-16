@@ -21,4 +21,4 @@
 *.db
 *.dat
 .lock
-*.sum
+
