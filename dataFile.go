@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -115,53 +114,58 @@ func extractFileNumber(filename string) int {
 	return -1
 }
 
-func loadLogsFromDataFiles(filePaths []string) ([]*log, error) {
-	sort.Slice(filePaths, func(i, j int) bool {
-		return extractFileNumber(filePaths[i]) < extractFileNumber(filePaths[j])
-	})
-	logs := make([]*log, 0, len(filePaths))
-
-	for _, dataFile := range filePaths {
-		file, err := os.OpenFile(dataFile, os.O_RDONLY, 0o644)
-		currentLog := &log{file: file, index: make(map[string]int64)}
-		logs = append(logs, currentLog)
-		if err != nil {
-			return nil, err
-		}
-
-		keySizeBuffer := make([]byte, 4)
-		if _, err := file.Read(keySizeBuffer); err != nil {
-			return nil, err
-		}
-
-		keySize := binary.LittleEndian.Uint32(keySizeBuffer)
-		keyBuffer := make([]byte, keySize)
-		if _, err := file.Read(keyBuffer); err != nil {
-			return nil, err
-		}
-
-		currentPosition, err := file.Seek(0, io.SeekCurrent)
-		if err != nil {
-			return nil, err
-		}
-
-		currentLog.index[string(keyBuffer)] = currentPosition
-
-		valueSizeBuffer := make([]byte, 4)
-		if _, err := file.Read(valueSizeBuffer); err != nil {
-			return nil, err
-		}
-		valueSize := binary.LittleEndian.Uint32(valueSizeBuffer)
-		_, err = file.Seek(int64(valueSize), io.SeekCurrent)
-		if err != nil {
-			return nil, err
-		}
-
-		err = file.Close()
-		if err != nil {
-			return nil, err
-		}
+func readKey(file *os.File, offset int64) (string, error) {
+	_, err := file.Seek(offset, io.SeekStart)
+	if err != nil {
+		return "", err
 	}
 
-	return logs, nil
+	keySizeBuffer := make([]byte, 4)
+	_, err = file.Read(keySizeBuffer)
+	if err != nil {
+		return "", err
+	}
+
+	keySize := binary.LittleEndian.Uint32(keySizeBuffer)
+	keyBuffer := make([]byte, keySize)
+	_, err = file.Read(keyBuffer)
+	if err != nil {
+		return "", err
+	}
+
+	return string(keyBuffer), nil
+}
+
+func readValue(filePath string, offset int64, tombStone string) (string, error) {
+	file, err := os.OpenFile(filePath, os.O_RDONLY, 0644)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	_, err = file.Seek(offset, io.SeekStart)
+	if err != nil {
+		return "", err
+	}
+
+	valueSizeBuffer := make([]byte, 4)
+	_, err = file.Read(valueSizeBuffer)
+	if err != nil {
+		return "", err
+	}
+
+	keySize := binary.LittleEndian.Uint32(valueSizeBuffer)
+	valueBuffer := make([]byte, keySize)
+	_, err = file.Read(valueBuffer)
+	if err != nil {
+		return "", err
+	}
+
+	value := string(valueBuffer)
+
+	if value == tombStone {
+		return "", fmt.Errorf("key not found")
+	}
+
+	return value, nil
 }

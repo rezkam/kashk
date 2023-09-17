@@ -4,42 +4,34 @@ package storage
 import (
 	"encoding/binary"
 	"fmt"
+	"golang.org/x/sys/unix"
 	"io"
 	"os"
 	"path/filepath"
 	"sync"
-
-	"golang.org/x/sys/unix"
 )
 
 const (
-	_  = iota // ignore first value by assigning to blank identifier
+	_  = iota // ignore first value (0) by assigning to blank identifier
 	KB = 1 << (10 * iota)
 	MB
 	GB
 )
 
+// default internal constants for the storage engine
+// can be overridden by the user with provided options
 const (
 	defaultTombstone = "tombstone-jbc46-q42fd-pggmc-kp38y-6mqd8"
-	DefaultLogSize   = 10 * MB
+	defaultLogSize   = 10 * MB
 	defaultKeySize   = 1 * KB
-	firstLogFileName = "1.dat"
 )
-
-// log represents the data and index for the storage engine
-type log struct {
-	file  *os.File
-	index map[string]int64
-	size  int64
-}
 
 // Engine represents the storage engine for key-value storage
 // TODO: Add garbage collector and compaction process
 type Engine struct {
 	// logs represents the list of log file and index for the storage engine
 	// TODO: let's see if we can change this to a []log and what's the benefit of using a slice of pointers
-	logs []*log
-	lock sync.RWMutex
+	readLogs []*readLog
 	// maxLogBytes represents the max size of the log file in bytes if the log file exceeds this size
 	// a new log file will be created and this file will be closed for writing.
 	// the smaller the size the more log files will be created and the more time it will take to read a key specially
@@ -61,12 +53,13 @@ type Engine struct {
 	// represents the file used to lock the storage engine for writing
 	// this lock makes sure only one process can write to the storage engine at a time
 	lockFile *os.File
+	// represents the lock for the storage engine to ensure only one process can write to the storage engine at a time
+	lock sync.RWMutex
+	// writeLog represents the current log file and index for the storage engine
+	writeLog *writeLog
 }
 
-type OptionSetter func(*Engine) error
-
-// NewEngine creates a new Engine instance with default settings
-// which can be overridden with optional settings
+// NewEngine creates a new Engine instance with default settings which can be overridden with optional settings
 // path is where the data files will be stored if the path doesn't exist it will be created
 // the user should have write access to the path otherwise an error will be returned
 func NewEngine(path string, options ...OptionSetter) (*Engine, error) {
@@ -84,28 +77,26 @@ func NewEngine(path string, options ...OptionSetter) (*Engine, error) {
 		return nil, err
 	}
 
-	logs, err := loadLogsFromDataFiles(dataFiles)
+	readLogs, err := initReadLogs(dataFiles)
 	if err != nil {
 		return nil, err
 	}
-
-	fileName := fmt.Sprintf("%d%s", len(logs)+1, dataFileFormatSuffix)
-	dataFilePath := filepath.Join(path, fileName)
-	file, err := os.OpenFile(dataFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return nil, err
-	}
-
-	logs = append(logs, &log{file: file, index: make(map[string]int64)})
 
 	engine := &Engine{
-		maxLogBytes: DefaultLogSize,
+		maxLogBytes: defaultLogSize,
 		maxKeyBytes: defaultKeySize,
 		tombStone:   defaultTombstone,
 		dataPath:    path,
 		lockFile:    lockFile,
-		logs:        logs,
+		readLogs:    readLogs,
 	}
+
+	file, err := engine.createNewFile()
+	if err != nil {
+		return nil, err
+	}
+
+	engine.writeLog = &writeLog{file: file, index: make(map[string]int64)}
 
 	for _, option := range options {
 		if err := option(engine); err != nil {
@@ -116,22 +107,7 @@ func NewEngine(path string, options ...OptionSetter) (*Engine, error) {
 	return engine, nil
 }
 
-func (e *Engine) Close() error {
-	currentLog := e.logs[len(e.logs)-1]
-
-	if err := currentLog.file.Sync(); err != nil {
-		return err
-	}
-	if err := currentLog.file.Close(); err != nil {
-		return err
-	}
-
-	if err := unix.Flock(int(e.lockFile.Fd()), unix.LOCK_UN); err != nil {
-		return nil
-	}
-
-	return nil
-}
+type OptionSetter func(*Engine) error
 
 // WithMaxLogSize sets the max size of the log file
 func WithMaxLogSize(size int64) OptionSetter {
@@ -167,6 +143,22 @@ func WithTombStone(value string) OptionSetter {
 
 		return nil
 	}
+}
+
+func (e *Engine) Close() error {
+
+	if err := e.writeLog.file.Sync(); err != nil {
+		return err
+	}
+	if err := e.writeLog.file.Close(); err != nil {
+		return err
+	}
+
+	if err := unix.Flock(int(e.lockFile.Fd()), unix.LOCK_UN); err != nil {
+		return nil
+	}
+
+	return nil
 }
 
 // Put set a key-value pair in the storage engine
@@ -210,23 +202,19 @@ func (e *Engine) appendKeyValue(key, value string) error {
 	e.lock.Lock()
 	defer e.lock.Unlock()
 
-	// Get the last log file
-	currentLog := e.logs[len(e.logs)-1]
-	if currentLog.size >= e.maxLogBytes {
-		newFileName := fmt.Sprintf("%d.dat", len(e.logs)+1)
-
-		newFile, err := os.OpenFile(e.dataPath+newFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if e.writeLog.size >= e.maxLogBytes {
+		e.readLogs = append(e.readLogs, &readLog{path: e.writeLog.file.Name(), index: e.writeLog.index})
+		file, err := e.createNewFile()
 		if err != nil {
 			return err
 		}
 
-		err = currentLog.file.Close()
+		err = e.writeLog.file.Close()
 		if err != nil {
 			return err
 		}
 
-		currentLog = &log{file: newFile, index: make(map[string]int64)}
-		e.logs = append(e.logs, currentLog)
+		e.writeLog = &writeLog{file: file, index: make(map[string]int64), size: 0}
 	}
 
 	keyBytes := []byte(key)
@@ -234,23 +222,23 @@ func (e *Engine) appendKeyValue(key, value string) error {
 	sizeBuffer := make([]byte, 4)
 	binary.LittleEndian.PutUint32(sizeBuffer, keySize)
 
-	written, err := currentLog.file.Write(sizeBuffer)
+	written, err := e.writeLog.file.Write(sizeBuffer)
 	if err != nil {
 		return err
 	}
 
-	currentLog.size += int64(written)
+	e.writeLog.size += int64(written)
 
-	written, err = currentLog.file.Write(keyBytes)
+	written, err = e.writeLog.file.Write(keyBytes)
 	if err != nil {
 		return err
 	}
 
-	currentLog.size += int64(written)
+	e.writeLog.size += int64(written)
 
 	// Find the current write position in the file
 	// Current position is the position that we write the value size
-	currentPos, err := currentLog.file.Seek(0, io.SeekCurrent)
+	currentPos, err := e.writeLog.file.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return err
 	}
@@ -259,22 +247,22 @@ func (e *Engine) appendKeyValue(key, value string) error {
 	valueSize := uint32(len(valueBytes))
 	sizeBuffer = make([]byte, 4)
 	binary.LittleEndian.PutUint32(sizeBuffer, valueSize)
-	written, err = currentLog.file.Write(sizeBuffer)
+	written, err = e.writeLog.file.Write(sizeBuffer)
 	if err != nil {
 		return err
 	}
 
-	currentLog.size += int64(written)
+	e.writeLog.size += int64(written)
 
-	written, err = currentLog.file.Write(valueBytes)
+	written, err = e.writeLog.file.Write(valueBytes)
 	if err != nil {
 		return err
 	}
 
-	currentLog.size += int64(written)
+	e.writeLog.size += int64(written)
 
 	// Update the index with the current write position
-	currentLog.index[key] = currentPos
+	e.writeLog.index[key] = currentPos
 
 	return nil
 }
@@ -286,56 +274,22 @@ func (e *Engine) getValue(key string) (string, error) {
 		return "", err
 	}
 	e.lock.RLock()
-	currentLog := e.logs[len(e.logs)-1]
-	position, ok := currentLog.index[key]
+	position, ok := e.writeLog.index[key]
 	e.lock.RUnlock()
 	if ok {
-		return e.readValueFromFile(position, currentLog)
+		return readValue(e.writeLog.file.Name(), position, e.tombStone)
 	}
 
-	for i := len(e.logs) - 2; i >= 0; i-- {
-		l := e.logs[i]
+	for i := len(e.readLogs) - 1; i >= 0; i-- {
+		currentLog := e.readLogs[i]
 
-		p, exists := l.index[key]
+		position, exists := currentLog.index[key]
 		if exists {
-			return e.readValueFromFile(p, l)
+			return readValue(currentLog.path, position, e.tombStone)
 		}
 	}
 
 	return "", fmt.Errorf("key %s not found", key)
-}
-
-// readValueFromFile reads the value from the file at a given position by opening and seeking to the position
-func (e *Engine) readValueFromFile(position int64, l *log) (string, error) {
-	readFile, err := os.OpenFile(l.file.Name(), os.O_RDONLY, 0644)
-	if err != nil {
-		return "", err
-	}
-	defer func(readFile *os.File) {
-		_ = readFile.Close()
-	}(readFile)
-
-	// Seek to the position of the key in the file
-	if _, err := readFile.Seek(position, io.SeekStart); err != nil {
-		return "", err
-	}
-
-	var sizeBuffer = make([]byte, 4)
-	if _, err := readFile.Read(sizeBuffer); err != nil {
-		return "", err
-	}
-
-	// Convert the size from bytes to uint32
-	valueSize := binary.LittleEndian.Uint32(sizeBuffer)
-
-	valueBuffer := make([]byte, valueSize)
-	if _, err := readFile.Read(valueBuffer); err != nil {
-		return "", err
-	}
-	if string(valueBuffer) == e.tombStone {
-		return "", fmt.Errorf("key not found")
-	}
-	return string(valueBuffer), nil
 }
 
 func (e *Engine) validateKey(key string) error {
@@ -357,4 +311,14 @@ func (e *Engine) validateValue(value string) error {
 		return fmt.Errorf("value cannot be longer than %d bytes", e.maxLogBytes)
 	}
 	return nil
+}
+
+func (e *Engine) createNewFile() (*os.File, error) {
+	fileName := fmt.Sprintf("%d%s", len(e.readLogs)+1, dataFileFormatSuffix)
+	dataFilePath := filepath.Join(e.dataPath, fileName)
+	file, err := os.OpenFile(dataFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	return file, nil
 }
