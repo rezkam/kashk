@@ -72,24 +72,31 @@ func NewEngine(path string, options ...OptionSetter) (*Engine, error) {
 		return nil, err
 	}
 
-	dataFiles, err := extractDatafiles(path)
-	if err != nil {
-		return nil, err
-	}
-
-	readLogs, err := initReadLogs(dataFiles)
-	if err != nil {
-		return nil, err
-	}
-
 	engine := &Engine{
 		maxLogBytes: defaultLogSize,
 		maxKeyBytes: defaultKeySize,
 		tombStone:   defaultTombstone,
 		dataPath:    path,
 		lockFile:    lockFile,
-		readLogs:    readLogs,
 	}
+
+	for _, option := range options {
+		if err := option(engine); err != nil {
+			return nil, err
+		}
+	}
+
+	dataFiles, err := extractDatafiles(path)
+	if err != nil {
+		return nil, err
+	}
+
+	readLogs, err := initReadLogs(dataFiles, engine.tombStone)
+	if err != nil {
+		return nil, err
+	}
+
+	engine.readLogs = readLogs
 
 	file, err := engine.createNewFile()
 	if err != nil {
@@ -97,12 +104,6 @@ func NewEngine(path string, options ...OptionSetter) (*Engine, error) {
 	}
 
 	engine.writeLog = &writeLog{file: file, index: make(map[string]int64)}
-
-	for _, option := range options {
-		if err := option(engine); err != nil {
-			return nil, err
-		}
-	}
 
 	return engine, nil
 }
