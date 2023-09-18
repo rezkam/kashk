@@ -91,7 +91,7 @@ func NewEngine(path string, options ...OptionSetter) (*Engine, error) {
 		return nil, err
 	}
 
-	readLogs, err := initReadLogs(dataFiles, engine.tombStone)
+	readLogs, err := initReadLogs(dataFiles)
 	if err != nil {
 		return nil, err
 	}
@@ -168,9 +168,59 @@ func (e *Engine) Put(key, value string) error {
 	return e.putKeyValue(key, value)
 }
 
-// Get returns the value for a given key from the storage engine
+// putKeyValue validates the key and value and then appends the key-value pair to the storage engine
+func (e *Engine) putKeyValue(key, value string) error {
+	if err := e.validateKey(key); err != nil {
+		return err
+	}
+	if err := e.validateValue(value); err != nil {
+		return err
+	}
+	return e.appendKeyValue(key, value)
+}
+
+// Get retrieves the value associated with the given key from the storage engine.
 func (e *Engine) Get(key string) (string, error) {
-	return e.getValue(key)
+	return e.findValueInLogs(key)
+}
+
+// findValueInLogs searches for a value corresponding to the given key
+// in the log files, starting with the most recent.
+func (e *Engine) findValueInLogs(key string) (string, error) {
+	if err := e.validateKey(key); err != nil {
+		return "", err
+	}
+	e.lock.RLock()
+	writeLog := e.writeLog
+	offset, ok := writeLog.index[key]
+	e.lock.RUnlock()
+	if ok {
+		return e.readValueFromFile(writeLog.file.Name(), offset)
+	}
+
+	for i := len(e.readLogs) - 1; i >= 0; i-- {
+		currentLog := e.readLogs[i]
+
+		offset, exists := currentLog.index[key]
+		if exists {
+			return e.readValueFromFile(currentLog.path, offset)
+		}
+	}
+
+	return "", fmt.Errorf("key %s not found", key)
+}
+
+// readValueFromFile reads a value from a file at the given offset.
+// It returns an error if the value corresponds to a tombstone.
+func (e *Engine) readValueFromFile(path string, offset int64) (string, error) {
+	value, err := openAndReadAtDataFile(path, offset)
+	if err != nil {
+		return "", err
+	}
+	if value == e.tombStone {
+		return "", fmt.Errorf("value not found")
+	}
+	return value, nil
 }
 
 // Delete deletes a key-value pair from the storage engine
@@ -185,17 +235,6 @@ func (e *Engine) deleteKey(key string) error {
 		return err
 	}
 	return e.appendKeyValue(key, e.tombStone)
-}
-
-// putKeyValue validates the key and value and then appends the key-value pair to the storage engine
-func (e *Engine) putKeyValue(key, value string) error {
-	if err := e.validateKey(key); err != nil {
-		return err
-	}
-	if err := e.validateValue(value); err != nil {
-		return err
-	}
-	return e.appendKeyValue(key, value)
 }
 
 // appendKeyValue appends a key-value pair to the file
@@ -266,31 +305,6 @@ func (e *Engine) appendKeyValue(key, value string) error {
 	e.writeLog.index[key] = currentPos
 
 	return nil
-}
-
-// getValue returns the value for a given key searching from the latest log file
-// to the oldest log file available in the storage engine
-func (e *Engine) getValue(key string) (string, error) {
-	if err := e.validateKey(key); err != nil {
-		return "", err
-	}
-	e.lock.RLock()
-	position, ok := e.writeLog.index[key]
-	e.lock.RUnlock()
-	if ok {
-		return readValue(e.writeLog.file.Name(), position, e.tombStone)
-	}
-
-	for i := len(e.readLogs) - 1; i >= 0; i-- {
-		currentLog := e.readLogs[i]
-
-		position, exists := currentLog.index[key]
-		if exists {
-			return readValue(currentLog.path, position, e.tombStone)
-		}
-	}
-
-	return "", fmt.Errorf("key %s not found", key)
 }
 
 func (e *Engine) validateKey(key string) error {

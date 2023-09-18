@@ -18,13 +18,13 @@ type writeLog struct {
 	size  int64
 }
 
-func initReadLogs(paths []string, tombStone string) ([]*readLog, error) {
+func initReadLogs(paths []string) ([]*readLog, error) {
 	sort.Slice(paths, func(i, j int) bool {
 		return extractFileNumber(paths[i]) < extractFileNumber(paths[j])
 	})
 	logs := make([]*readLog, 0, len(paths))
 	for _, path := range paths {
-		log, err := extractReadLog(path, tombStone)
+		log, err := extractReadLog(path)
 		if err != nil {
 			return nil, err
 		}
@@ -34,7 +34,7 @@ func initReadLogs(paths []string, tombStone string) ([]*readLog, error) {
 	return logs, nil
 }
 
-func extractReadLog(path string, tombStone string) (*readLog, error) {
+func extractReadLog(path string) (*readLog, error) {
 	log := &readLog{
 		path:  path,
 		index: make(map[string]int64),
@@ -47,11 +47,7 @@ func extractReadLog(path string, tombStone string) (*readLog, error) {
 	defer file.Close()
 
 	for {
-		currentOffset, err := file.Seek(0, io.SeekCurrent)
-		if err != nil {
-			return nil, err
-		}
-		key, err := readKey(file, currentOffset)
+		key, err := readDataFile(file)
 		if err != nil {
 			if err == io.EOF {
 				break
@@ -65,8 +61,11 @@ func extractReadLog(path string, tombStone string) (*readLog, error) {
 		log.index[key] = endOffset
 
 		// Intentionally reading value to move the file cursor to the next key
-		_, err = readValue(path, endOffset, tombStone)
+		_, err = readDataFile(file)
 		if err != nil {
+			if err == io.EOF {
+				break
+			}
 			return nil, err
 		}
 	}

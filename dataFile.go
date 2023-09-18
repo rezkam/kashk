@@ -114,57 +114,40 @@ func extractFileNumber(filename string) int {
 	return -1
 }
 
-func readKey(file *os.File, offset int64) (string, error) {
+func readDataFile(file *os.File) (string, error) {
+	var size uint32
+	err := binary.Read(file, binary.LittleEndian, &size)
+	if err != nil {
+		return "", err
+	}
+
+	dataBuffer := make([]byte, size)
+	_, err = io.ReadFull(file, dataBuffer)
+	if err != nil {
+		return "", err
+	}
+
+	return string(dataBuffer), nil
+}
+
+func readAtDataFile(file *os.File, offset int64) (string, error) {
 	_, err := file.Seek(offset, io.SeekStart)
 	if err != nil {
 		return "", err
 	}
-
-	keySizeBuffer := make([]byte, 4)
-	_, err = file.Read(keySizeBuffer)
-	if err != nil {
-		return "", err
-	}
-
-	keySize := binary.LittleEndian.Uint32(keySizeBuffer)
-	keyBuffer := make([]byte, keySize)
-	_, err = file.Read(keyBuffer)
-	if err != nil {
-		return "", err
-	}
-
-	return string(keyBuffer), nil
+	return readDataFile(file)
 }
 
-func readValue(filePath string, offset int64, tombStone string) (string, error) {
-	file, err := os.OpenFile(filePath, os.O_RDONLY, 0644)
+func openAndReadAtDataFile(path string, offset int64) (string, error) {
+	file, err := os.OpenFile(path, os.O_RDONLY, 0644)
 	if err != nil {
 		return "", err
 	}
 	defer file.Close()
 
-	_, err = file.Seek(offset, io.SeekStart)
+	value, err := readAtDataFile(file, offset)
 	if err != nil {
 		return "", err
-	}
-
-	valueSizeBuffer := make([]byte, 4)
-	_, err = file.Read(valueSizeBuffer)
-	if err != nil {
-		return "", err
-	}
-
-	keySize := binary.LittleEndian.Uint32(valueSizeBuffer)
-	valueBuffer := make([]byte, keySize)
-	_, err = file.Read(valueBuffer)
-	if err != nil {
-		return "", err
-	}
-
-	value := string(valueBuffer)
-
-	if value == tombStone {
-		return "", fmt.Errorf("key not found")
 	}
 
 	return value, nil
