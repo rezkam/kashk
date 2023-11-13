@@ -27,7 +27,6 @@ const (
 )
 
 // Engine represents the storage engine for key-value storage
-// TODO: Add garbage collector and compaction process
 type Engine struct {
 	// logs represents the list of log file and index for the storage engine
 	// TODO: let's see if we can change this to a []log and what's the benefit of using a slice of pointers
@@ -57,12 +56,20 @@ type Engine struct {
 	lock sync.RWMutex
 	// writeLog represents the current log file and index for the storage engine
 	writeLog *writeLog
+	// options holds a slice of OptionSetter functions for configuring the engine.
+	// This approach allows for flexible and extensible configuration of the Engine instance.
+	// Each OptionSetter is a function that modifies the Engine's state, enabling customization
+	// of behavior such as setting maximum log sizes, key sizes, or other operational parameters.
+	options []OptionSetter
+	// compactionLock is a mutex to ensure only one compaction process runs at a time
+	compactionLock sync.Mutex
 }
 
 // NewEngine creates a new Engine instance with default settings which can be overridden with optional settings
 // path is where the data files will be stored if the path doesn't exist it will be created
 // the user should have write access to the path otherwise an error will be returned
 func NewEngine(path string, options ...OptionSetter) (*Engine, error) {
+	path = ensureTrailingSlash(path)
 	if err := validateDataPath(path); err != nil {
 		return nil, err
 	}
@@ -78,6 +85,7 @@ func NewEngine(path string, options ...OptionSetter) (*Engine, error) {
 		tombStone:   defaultTombstone,
 		dataPath:    path,
 		lockFile:    lockFile,
+		options:     options,
 	}
 
 	for _, option := range options {
@@ -237,23 +245,26 @@ func (e *Engine) deleteKey(key string) error {
 	return e.appendKeyValue(key, e.tombStone)
 }
 
+func (e *Engine) closeWriteLog() error {
+	e.readLogs = append(e.readLogs, &readLog{path: e.writeLog.file.Name(), index: e.writeLog.index})
+	return e.writeLog.file.Close()
+}
+
 // appendKeyValue appends a key-value pair to the file
 func (e *Engine) appendKeyValue(key, value string) error {
 	e.lock.Lock()
 	defer e.lock.Unlock()
 
 	if e.writeLog.size >= e.maxLogBytes {
-		e.readLogs = append(e.readLogs, &readLog{path: e.writeLog.file.Name(), index: e.writeLog.index})
+		err := e.closeWriteLog()
+		if err != nil {
+			return err
+		}
+
 		file, err := e.createNewFile()
 		if err != nil {
 			return err
 		}
-
-		err = e.writeLog.file.Close()
-		if err != nil {
-			return err
-		}
-
 		e.writeLog = &writeLog{file: file, index: make(map[string]int64), size: 0}
 	}
 
@@ -331,7 +342,7 @@ func (e *Engine) validateValue(value string) error {
 func (e *Engine) createNewFile() (*os.File, error) {
 	fileName := fmt.Sprintf("%d%s", len(e.readLogs)+1, dataFileFormatSuffix)
 	dataFilePath := filepath.Join(e.dataPath, fileName)
-	file, err := os.OpenFile(dataFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	file, err := os.OpenFile(dataFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644) // how we should get the righy permission
 	if err != nil {
 		return nil, err
 	}

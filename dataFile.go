@@ -40,6 +40,10 @@ func ensureDataDirectoryExists(path string) error {
 	return nil
 }
 
+func ensureTrailingSlash(path string) string {
+	return filepath.Clean(path) + string(filepath.Separator)
+}
+
 func validateWriteAccess(path string) error {
 	testPath := filepath.Join(path, "test-access-file")
 	testFile, err := os.OpenFile(testPath, os.O_CREATE|os.O_WRONLY, 0o644)

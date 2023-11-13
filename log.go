@@ -19,7 +19,7 @@ type writeLog struct {
 }
 
 func initReadLogs(paths []string) ([]*readLog, error) {
-	sort.Slice(paths, func(i, j int) bool {
+	sort.Slice(paths, func(i, j int) bool { // todo most likely we don't need it since walk order is lexical
 		return extractFileNumber(paths[i]) < extractFileNumber(paths[j])
 	})
 	logs := make([]*readLog, 0, len(paths))
@@ -40,7 +40,7 @@ func extractReadLog(path string) (*readLog, error) {
 		index: make(map[string]int64),
 	}
 
-	file, err := os.OpenFile(path, os.O_RDONLY, 0644)
+	file, err := os.OpenFile(path, os.O_RDONLY, 0644) // todo: set right perm for the read only file
 	if err != nil {
 		return nil, err
 	}
