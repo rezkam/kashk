@@ -12,6 +12,7 @@ import (
 // It ensures that only one compaction process can run at a time and manages the creation,
 // execution, and cleanup of the compaction environment.
 func (e *Engine) compact() error {
+	// TODO: add support for removing deleted entries from the logs
 	// Acquire a lock to ensure single execution of the compaction process
 	e.compactionLock.Lock()
 	defer e.compactionLock.Unlock()

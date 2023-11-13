@@ -19,7 +19,8 @@ type writeLog struct {
 }
 
 func initReadLogs(paths []string) ([]*readLog, error) {
-	sort.Slice(paths, func(i, j int) bool { // todo most likely we don't need it since walk order is lexical
+	// sorting is needed as the file names order puts 13 before 2, and we rely on the order of files in making the index
+	sort.Slice(paths, func(i, j int) bool {
 		return extractFileNumber(paths[i]) < extractFileNumber(paths[j])
 	})
 	logs := make([]*readLog, 0, len(paths))
