@@ -85,24 +85,29 @@ func validateDataPath(path string) error {
 	return nil
 }
 
+// extractDatafiles returns a list of data files in the given path
+// it's not recursive, it only returns the files in the given path
 func extractDatafiles(path string) ([]string, error) {
 	var dataFiles []string
-	err := filepath.WalkDir(path, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+
+	// Iterate over each entry and append if it's a data file
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue // skip directories
 		}
-		if d.IsDir() {
-			return nil
-		}
-		if info, err := d.Info(); err != nil {
-			return err
+		// Check if the file is a data file
+		if info, err := entry.Info(); err != nil {
+			return nil, err
 		} else {
-			if info.Size() > 0 && filepath.Ext(path) == dataFileFormatSuffix {
-				dataFiles = append(dataFiles, path)
+			if info.Size() > 0 && filepath.Ext(entry.Name()) == dataFileFormatSuffix {
+				dataFiles = append(dataFiles, filepath.Join(path, entry.Name()))
 			}
 		}
-		return nil
-	})
+	}
 
 	return dataFiles, err
 }
@@ -155,4 +160,36 @@ func openAndReadAtDataFile(path string, offset int64) (string, error) {
 	}
 
 	return value, nil
+}
+
+func extractKeysFromDataFile(filePath string) ([]string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var keys []string
+	for {
+		// Read key size and key
+		key, err := readDataFile(file)
+		if err == io.EOF {
+			break // End of file reached
+		}
+		if err != nil {
+			return nil, fmt.Errorf("error reading key: %w", err)
+		}
+
+		keys = append(keys, key)
+
+		// Read value size and skip the value
+		_, err = readDataFile(file)
+		if err == io.EOF {
+			break // End of file reached
+		}
+		if err != nil {
+			return nil, fmt.Errorf("error reading value: %w", err)
+		}
+	}
+	return keys, nil
 }

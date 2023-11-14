@@ -12,7 +12,6 @@ import (
 // It ensures that only one compaction process can run at a time and manages the creation,
 // execution, and cleanup of the compaction environment.
 func (e *Engine) compact() error {
-	// TODO: add support for removing deleted entries from the logs
 	// Acquire a lock to ensure single execution of the compaction process
 	e.compactionLock.Lock()
 	defer e.compactionLock.Unlock()
@@ -52,15 +51,32 @@ func (e *Engine) compact() error {
 	snapshotReadLogs := make([]*readLog, len(e.readLogs))
 	copy(snapshotReadLogs, e.readLogs)
 
+	// Map to track the keys that have been deleted
+	deletedKeys := make(map[string]struct{})
+
 	// Iterate through each log in the snapshot and compact the data
 	for i := len(snapshotReadLogs) - 1; i >= 0; i-- {
 		currentLog := snapshotReadLogs[i]
 		for key, offset := range currentLog.index {
+			if _, ok := deletedKeys[key]; ok {
+				continue // Skip this key as it's already deleted
+			}
+
+			// Try to get the key from the compaction engine. If it exists, no need to re-add it.
 			if _, err := cEngine.Get(key); err != nil {
+				// If the key doesn't exist in the compaction engine, read its value
 				value, err := e.readValueFromFile(currentLog.path, offset)
 				if err != nil {
 					return fmt.Errorf("failed to read value for key %s: %w", key, err)
 				}
+
+				// Check if the current value is a tombstone, indicating the key is deleted
+				if value == e.tombStone {
+					deletedKeys[key] = struct{}{}
+					continue // Skip adding this key-value pair to the compaction engine
+				}
+
+				// Add the key-value pair to the compaction engine
 				if err := cEngine.Put(key, value); err != nil {
 					return fmt.Errorf("failed to put key-value pair in compaction engine: %w", err)
 				}
@@ -106,15 +122,14 @@ func (e *Engine) replaceCompactedLogs(snapshotReadLogs []*readLog, cEngine *Engi
 	}
 
 	// Move compacted files from the compaction directory to the main directory
-	compactionFiles, err := os.ReadDir(cEngine.dataPath)
+	compactionFiles, err := extractDatafiles(cEngine.dataPath)
 	if err != nil {
 		return fmt.Errorf("failed to read compaction directory: %w", err)
 	}
-	for _, file := range compactionFiles {
-		oldPath := filepath.Join(cEngine.dataPath, file.Name())
-		newPath := filepath.Join(e.dataPath, file.Name())
-		if err := os.Rename(oldPath, newPath); err != nil {
-			return fmt.Errorf("failed to move compacted file %s to %s: %w", oldPath, newPath, err)
+	for _, path := range compactionFiles {
+		newPath := filepath.Join(e.dataPath, filepath.Base(path))
+		if err := os.Rename(path, newPath); err != nil {
+			return fmt.Errorf("failed to move compacted file %s to %s: %w", path, newPath, err)
 		}
 	}
 

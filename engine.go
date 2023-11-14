@@ -203,7 +203,11 @@ func (e *Engine) findValueInLogs(key string) (string, error) {
 	offset, ok := writeLog.index[key]
 	e.lock.RUnlock()
 	if ok {
-		return e.readValueFromFile(writeLog.file.Name(), offset)
+		value, err := e.readValueFromFile(writeLog.file.Name(), offset)
+		if value == e.tombStone {
+			return "", fmt.Errorf("value not found")
+		}
+		return value, err
 	}
 
 	for i := len(e.readLogs) - 1; i >= 0; i-- {
@@ -211,7 +215,11 @@ func (e *Engine) findValueInLogs(key string) (string, error) {
 
 		offset, exists := currentLog.index[key]
 		if exists {
-			return e.readValueFromFile(currentLog.path, offset)
+			value, err := e.readValueFromFile(currentLog.path, offset)
+			if value == e.tombStone {
+				return "", fmt.Errorf("value not found")
+			}
+			return value, err
 		}
 	}
 
@@ -219,14 +227,10 @@ func (e *Engine) findValueInLogs(key string) (string, error) {
 }
 
 // readValueFromFile reads a value from a file at the given offset.
-// It returns an error if the value corresponds to a tombstone.
 func (e *Engine) readValueFromFile(path string, offset int64) (string, error) {
 	value, err := openAndReadAtDataFile(path, offset)
 	if err != nil {
 		return "", err
-	}
-	if value == e.tombStone {
-		return "", fmt.Errorf("value not found")
 	}
 	return value, nil
 }

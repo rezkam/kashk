@@ -5,12 +5,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
 )
 
-func TestSuccessfulCompaction(t *testing.T) {
+func TestSuccessfulCompactionWithUpdates(t *testing.T) {
 	// Setup test environment
-	tempDir, err := os.MkdirTemp("", "successful_compaction_test")
+	tempDir, err := os.MkdirTemp("", "successful_compaction_with_update_test")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir) // clean up
 
@@ -76,4 +78,76 @@ func TestSuccessfulCompaction(t *testing.T) {
 
 	// Close the engine at the end of the test
 	require.NoError(t, engine.Close())
+}
+
+func TestSuccessfulCompactionWithDeletions(t *testing.T) {
+	// Setup test environment
+	tempDir, err := os.MkdirTemp("", "successful_compaction_with_deletion_test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir) // clean up
+
+	// Initialize Engine with a very small max file size
+	verySmallMaxLogSize := int64(256) // 256 bytes
+	engine, err := NewEngine(tempDir, WithMaxLogSize(verySmallMaxLogSize))
+	require.NoError(t, err)
+
+	// Populate the engine with test data
+	for i := 0; i < 50; i++ {
+		key := fmt.Sprintf("key%d", i)
+		value := fmt.Sprintf("value%d", i)
+		err := engine.Put(key, value)
+		require.NoError(t, err)
+	}
+
+	// Delete a subset of keys
+	for i := 0; i < 25; i++ {
+		key := fmt.Sprintf("key%d", i)
+		err := engine.Delete(key)
+		require.NoError(t, err)
+	}
+
+	err = engine.closeWriteLog()
+	require.NoError(t, err)
+
+	// Run Compaction
+	err = engine.compact()
+	require.NoError(t, err)
+
+	// Get a list of compacted files
+	compactFiles, err := extractDatafiles(tempDir)
+	require.NoError(t, err)
+
+	// Read each compacted file and check for deleted keys
+	for _, filePath := range compactFiles {
+		keys, err := extractKeysFromDataFile(filePath)
+		require.NoError(t, err)
+
+		// Check that none of the deleted keys are present
+		for _, key := range keys {
+			if isDeletedKey(key) {
+				t.Errorf("Deleted key %s found in compacted file %s", key, filePath)
+			}
+		}
+	}
+
+	for i := 0; i < 50; i++ {
+		key := fmt.Sprintf("key%d", i)
+		if !isDeletedKey(key) {
+			value, err := engine.Get(key)
+			require.NoError(t, err)
+			assert.Equal(t, "value"+strconv.Itoa(i), value)
+		} else {
+			_, err := engine.Get(key)
+			assert.Error(t, err)
+		}
+	}
+}
+
+// isDeletedKey checks if the key is one of the deleted keys
+func isDeletedKey(key string) bool {
+	keyNum, err := strconv.Atoi(strings.TrimPrefix(key, "key"))
+	if err != nil {
+		return false
+	}
+	return keyNum < 25 // since we deleted keys from key0 to key24
 }
