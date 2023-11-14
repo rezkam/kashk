@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 const (
@@ -21,9 +22,10 @@ const (
 // default internal constants for the storage engine
 // can be overridden by the user with provided options
 const (
-	defaultTombstone = "tombstone-jbc46-q42fd-pggmc-kp38y-6mqd8"
-	defaultLogSize   = 10 * MB
-	defaultKeySize   = 1 * KB
+	defaultTombstone          = "tombstone-jbc46-q42fd-pggmc-kp38y-6mqd8"
+	defaultLogSize            = 10 * MB
+	defaultKeySize            = 1 * KB
+	defaultCompactionInterval = 1 * time.Hour
 )
 
 // Engine represents the storage engine for key-value storage
@@ -61,8 +63,8 @@ type Engine struct {
 	// Each OptionSetter is a function that modifies the Engine's state, enabling customization
 	// of behavior such as setting maximum log sizes, key sizes, or other operational parameters.
 	options []OptionSetter
-	// compactionLock is a mutex to ensure only one compaction process runs at a time
-	compactionLock sync.Mutex
+	// compactionManager handles all compaction-related processes
+	compactionManager *compactionManager
 }
 
 // NewEngine creates a new Engine instance with default settings which can be overridden with optional settings
@@ -86,6 +88,10 @@ func NewEngine(path string, options ...OptionSetter) (*Engine, error) {
 		dataPath:    path,
 		lockFile:    lockFile,
 		options:     options,
+		compactionManager: &compactionManager{
+			enabled:  false,
+			interval: defaultCompactionInterval,
+		},
 	}
 
 	for _, option := range options {
@@ -112,6 +118,14 @@ func NewEngine(path string, options ...OptionSetter) (*Engine, error) {
 	}
 
 	engine.writeLog = &writeLog{file: file, index: make(map[string]int64)}
+
+	// start background compaction process if enabled
+	if engine.compactionManager.enabled {
+		err := engine.startBackgroundCompaction()
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return engine, nil
 }
@@ -154,7 +168,29 @@ func WithTombStone(value string) OptionSetter {
 	}
 }
 
+// WithCompactionEnabled enables compaction for the storage engine
+func WithCompactionEnabled() OptionSetter {
+	return func(engine *Engine) error {
+		engine.compactionManager.enabled = true
+		return nil
+	}
+}
+
+// WithCompactionInterval sets the interval for the compaction process
+func WithCompactionInterval(interval time.Duration) OptionSetter {
+	return func(engine *Engine) error {
+		if interval <= 0 {
+			return fmt.Errorf("invalid compaction interval")
+		}
+		engine.compactionManager.interval = interval
+		return nil
+	}
+}
+
 func (e *Engine) Close() error {
+	if e.compactionManager.ticker != nil {
+		e.compactionManager.ticker.Stop()
+	}
 
 	if err := e.writeLog.file.Sync(); err != nil {
 		return err

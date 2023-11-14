@@ -5,16 +5,24 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
+
+type compactionManager struct {
+	enabled  bool
+	interval time.Duration
+	ticker   *time.Ticker
+	lock     sync.Mutex
+}
 
 // compact orchestrates the compaction process for the storage engine.
 // It ensures that only one compaction process can run at a time and manages the creation,
 // execution, and cleanup of the compaction environment.
 func (e *Engine) compact() error {
 	// Acquire a lock to ensure single execution of the compaction process
-	e.compactionLock.Lock()
-	defer e.compactionLock.Unlock()
+	e.compactionManager.lock.Lock()
+	defer e.compactionManager.lock.Unlock()
 
 	// Define the path for the compaction directory
 	compactionPath := filepath.Join(e.dataPath, "compaction")
@@ -161,4 +169,20 @@ func isLogInSnapshot(log *readLog, snapshotReadLogs []*readLog) bool {
 		}
 	}
 	return false
+}
+
+func (e *Engine) startBackgroundCompaction() error {
+	if !e.compactionManager.enabled {
+		return fmt.Errorf("compaction is not enabled")
+	}
+
+	e.compactionManager.ticker = time.NewTicker(e.compactionManager.interval)
+	go func() {
+		for range e.compactionManager.ticker.C {
+			if err := e.compact(); err != nil {
+				slog.Warn("failed to run compaction", "err", err)
+			}
+		}
+	}()
+	return nil
 }
