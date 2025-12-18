@@ -8,6 +8,7 @@ import (
 
 // log represents the data and index for the storage engine
 type readLog struct {
+	file  *os.File          // Keep file open for reads
 	path  string
 	index map[string]int64
 }
@@ -36,16 +37,16 @@ func initReadLogs(paths []string) ([]*readLog, error) {
 }
 
 func extractReadLog(path string) (*readLog, error) {
-	log := &readLog{
-		path:  path,
-		index: make(map[string]int64),
-	}
-
 	file, err := os.OpenFile(path, os.O_RDONLY, 0644) // todo: set right perm for the read only file
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+
+	log := &readLog{
+		file:  file,  // Keep file open
+		path:  path,
+		index: make(map[string]int64),
+	}
 
 	for {
 		key, err := readDataFile(file)
@@ -53,10 +54,12 @@ func extractReadLog(path string) (*readLog, error) {
 			if err == io.EOF {
 				break
 			}
+			file.Close()
 			return nil, err
 		}
 		endOffset, err := file.Seek(0, io.SeekCurrent)
 		if err != nil {
+			file.Close()
 			return nil, err
 		}
 		log.index[key] = endOffset
@@ -67,6 +70,7 @@ func extractReadLog(path string) (*readLog, error) {
 			if err == io.EOF {
 				break
 			}
+			file.Close()
 			return nil, err
 		}
 	}

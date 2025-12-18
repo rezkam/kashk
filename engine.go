@@ -199,6 +199,15 @@ func (e *Engine) Close() error {
 		return err
 	}
 
+	// Close all open readLog files
+	for _, readLog := range e.readLogs {
+		if readLog.file != nil {
+			if err := readLog.file.Close(); err != nil {
+				return err
+			}
+		}
+	}
+
 	if err := unix.Flock(int(e.lockFile.Fd()), unix.LOCK_UN); err != nil {
 		return nil
 	}
@@ -228,6 +237,13 @@ func (e *Engine) Get(key string) (string, error) {
 	return e.findValueInLogs(key)
 }
 
+// GetBytes retrieves the value as a byte slice without string conversion.
+// The returned byte slice is owned by the caller and will not be modified.
+// This is more efficient than Get() for binary data or when string conversion is not needed.
+func (e *Engine) GetBytes(key string) ([]byte, error) {
+	return e.findValueInLogsAsBytes(key)
+}
+
 // findValueInLogs searches for a value corresponding to the given key
 // in the log files, starting with the most recent.
 func (e *Engine) findValueInLogs(key string) (string, error) {
@@ -239,7 +255,7 @@ func (e *Engine) findValueInLogs(key string) (string, error) {
 	offset, ok := writeLog.index[key]
 	e.lock.RUnlock()
 	if ok {
-		value, err := e.readValueFromFile(writeLog.file.Name(), offset)
+		value, err := readAtDataFile(writeLog.file, offset)
 		if value == e.tombStone {
 			return "", fmt.Errorf("value not found")
 		}
@@ -251,7 +267,7 @@ func (e *Engine) findValueInLogs(key string) (string, error) {
 
 		offset, exists := currentLog.index[key]
 		if exists {
-			value, err := e.readValueFromFile(currentLog.path, offset)
+			value, err := readAtDataFile(currentLog.file, offset)
 			if value == e.tombStone {
 				return "", fmt.Errorf("value not found")
 			}
@@ -260,6 +276,39 @@ func (e *Engine) findValueInLogs(key string) (string, error) {
 	}
 
 	return "", fmt.Errorf("key %s not found", key)
+}
+
+// findValueInLogsAsBytes searches for a value and returns it as bytes (no string conversion)
+func (e *Engine) findValueInLogsAsBytes(key string) ([]byte, error) {
+	if err := e.validateKey(key); err != nil {
+		return nil, err
+	}
+	e.lock.RLock()
+	writeLog := e.writeLog
+	offset, ok := writeLog.index[key]
+	e.lock.RUnlock()
+	if ok {
+		value, err := readAtDataFileAsBytes(writeLog.file, offset)
+		if string(value) == e.tombStone {
+			return nil, fmt.Errorf("value not found")
+		}
+		return value, err
+	}
+
+	for i := len(e.readLogs) - 1; i >= 0; i-- {
+		currentLog := e.readLogs[i]
+
+		offset, exists := currentLog.index[key]
+		if exists {
+			value, err := readAtDataFileAsBytes(currentLog.file, offset)
+			if string(value) == e.tombStone {
+				return nil, fmt.Errorf("value not found")
+			}
+			return value, err
+		}
+	}
+
+	return nil, fmt.Errorf("key %s not found", key)
 }
 
 // readValueFromFile reads a value from a file at the given offset.
@@ -286,8 +335,26 @@ func (e *Engine) deleteKey(key string) error {
 }
 
 func (e *Engine) closeWriteLog() error {
-	e.readLogs = append(e.readLogs, &readLog{path: e.writeLog.file.Name(), index: e.writeLog.index})
-	return e.writeLog.file.Close()
+	path := e.writeLog.file.Name()
+	index := e.writeLog.index
+
+	// Close the RDWR write handle
+	if err := e.writeLog.file.Close(); err != nil {
+		return err
+	}
+
+	// Reopen as READONLY and keep open for reads
+	file, err := os.OpenFile(path, os.O_RDONLY, 0644)
+	if err != nil {
+		return err
+	}
+
+	e.readLogs = append(e.readLogs, &readLog{
+		file:  file,  // Keep readonly file open
+		path:  path,
+		index: index,
+	})
+	return nil
 }
 
 // appendKeyValue appends a key-value pair to the file
@@ -382,7 +449,8 @@ func (e *Engine) validateValue(value string) error {
 func (e *Engine) createNewFile() (*os.File, error) {
 	fileName := fmt.Sprintf("%d%s", len(e.readLogs)+1, dataFileFormatSuffix)
 	dataFilePath := filepath.Join(e.dataPath, fileName)
-	file, err := os.OpenFile(dataFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644) // how we should get the righy permission
+	// Open with RDWR so we can read from writeLog (needed since we keep files open)
+	file, err := os.OpenFile(dataFilePath, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, err
 	}

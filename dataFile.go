@@ -147,6 +147,30 @@ func readAtDataFile(file *os.File, offset int64) (string, error) {
 	return readDataFile(file)
 }
 
+// readAtDataFileAsBytes reads value as bytes without string conversion
+func readAtDataFileAsBytes(file *os.File, offset int64) ([]byte, error) {
+	_, err := file.Seek(offset, io.SeekStart)
+	if err != nil {
+		return nil, err
+	}
+
+	// Read value size
+	var size uint32
+	err = binary.Read(file, binary.LittleEndian, &size)
+	if err != nil {
+		return nil, err
+	}
+
+	// Allocate fresh buffer (caller owns this, won't be modified)
+	dataBuffer := make([]byte, size)
+	_, err = io.ReadFull(file, dataBuffer)
+	if err != nil {
+		return nil, err
+	}
+
+	return dataBuffer, nil
+}
+
 func openAndReadAtDataFile(path string, offset int64) (string, error) {
 	file, err := os.OpenFile(path, os.O_RDONLY, 0644)
 	if err != nil {
