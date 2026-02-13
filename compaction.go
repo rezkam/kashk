@@ -13,6 +13,7 @@ type compactionManager struct {
 	enabled  bool
 	interval time.Duration
 	ticker   *time.Ticker
+	done     chan struct{}
 	lock     sync.Mutex
 }
 
@@ -219,10 +220,16 @@ func (e *Engine) startBackgroundCompaction() error {
 	}
 
 	e.compactionManager.ticker = time.NewTicker(e.compactionManager.interval)
+	e.compactionManager.done = make(chan struct{})
 	go func() {
-		for range e.compactionManager.ticker.C {
-			if err := e.compact(); err != nil {
-				slog.Warn("failed to run compaction", "err", err)
+		for {
+			select {
+			case <-e.compactionManager.done:
+				return
+			case <-e.compactionManager.ticker.C:
+				if err := e.compact(); err != nil {
+					slog.Warn("failed to run compaction", "err", err)
+				}
 			}
 		}
 	}()
