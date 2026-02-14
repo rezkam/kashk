@@ -188,6 +188,9 @@ func WithCompactionInterval(interval time.Duration) OptionSetter {
 }
 
 func (e *Engine) Close() error {
+	if e.compactionManager.done != nil {
+		close(e.compactionManager.done)
+	}
 	if e.compactionManager.ticker != nil {
 		e.compactionManager.ticker.Stop()
 	}
